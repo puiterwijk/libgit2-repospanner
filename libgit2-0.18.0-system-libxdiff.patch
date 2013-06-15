@@ -1,0 +1,26 @@
+diff -up libgit2-0.18.0/CMakeLists.txt.system-libxdiff libgit2-0.18.0/CMakeLists.txt
+--- libgit2-0.18.0/CMakeLists.txt.system-libxdiff	2013-05-30 12:50:45.703153568 -0400
++++ libgit2-0.18.0/CMakeLists.txt	2013-05-30 12:52:01.708154709 -0400
+@@ -286,11 +286,11 @@ ELSEIF (AMIGA)
+ ELSE()
+ 	FILE(GLOB SRC_OS src/unix/*.c)
+ ENDIF()
+-FILE(GLOB SRC_GIT2 src/*.c src/transports/*.c src/xdiff/*.c)
++FILE(GLOB SRC_GIT2 src/*.c src/transports/*.c)
+ 
+ # Compile and link libgit2
+ ADD_LIBRARY(git2 ${SRC_GIT2} ${SRC_OS} ${SRC_ZLIB} ${SRC_HTTP} ${SRC_REGEX} ${SRC_SHA1} ${WIN_RC})
+-TARGET_LINK_LIBRARIES(git2 ${SSL_LIBRARIES})
++TARGET_LINK_LIBRARIES(git2 ${SSL_LIBRARIES} -lxdiff)
+ TARGET_OS_LIBRARIES(git2)
+ 
+ # Workaround for Cmake bug #0011240 (see http://public.kitware.com/Bug/view.php?id=11240)
+@@ -350,7 +350,7 @@ IF (BUILD_CLAR)
+ 
+ 	ADD_EXECUTABLE(libgit2_clar ${SRC_GIT2} ${SRC_OS} ${SRC_CLAR} ${SRC_TEST} ${SRC_ZLIB} ${SRC_HTTP} ${SRC_REGEX} ${SRC_SHA1})
+ 
+-	TARGET_LINK_LIBRARIES(libgit2_clar ${SSL_LIBRARIES})
++	TARGET_LINK_LIBRARIES(libgit2_clar ${SSL_LIBRARIES} -lxdiff)
+ 	TARGET_OS_LIBRARIES(libgit2_clar)
+ 	MSVC_SPLIT_SOURCES(libgit2_clar)
+ 
