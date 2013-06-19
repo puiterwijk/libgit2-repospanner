@@ -1,6 +1,6 @@
 Name: libgit2
 Version: 0.18.0
-Release: 4%{?dist}
+Release: 5%{?dist}
 Summary: A C implementation of the Git core methods as a library
 
 License: GPLv2 with exceptions
@@ -12,6 +12,9 @@ Patch0: libgit2-0.18.0-http.patch
 
 # Use system libxdiff
 Patch1: libgit2-0.18.0-system-libxdiff.patch
+
+# Add htonl() and friends declarations on non-x86 arches
+Patch2: libgit2-0.18.0-non-x86.patch
 
 BuildRequires: cmake >= 2.6
 BuildRequires: http-parser-devel
@@ -44,6 +47,7 @@ find examples -name ".gitignore" -delete
 # Apply patches
 %patch0 -p1
 %patch1 -p1 -b .system-libxdiff
+%patch2 -p1 -b .non-x86
 
 # Fix pkgconfig generation
 sed -i 's|@CMAKE_INSTALL_PREFIX@/||' libgit2.pc.in
@@ -86,6 +90,10 @@ make install DESTDIR=%{buildroot}
 
 
 %changelog
+* Wed Jun 19 2013 Dan Horák <dan[at]danny.cz> - 0.18.0-5
+- Add htonl() and friends declarations on non-x86 arches
+- Rebuilt with fixed libxdiff for big endian arches
+
 * Thu May 30 2013 Veeti Paananen <veeti.paananen@rojekti.fi> - 0.18.0-4
 - Update the http-parser patch
 - Skip tests that require network connectivity
