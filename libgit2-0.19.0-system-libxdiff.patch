@@ -1,0 +1,29 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b931dc5..2aa8fde 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -298,7 +298,7 @@ ELSEIF (AMIGA)
+ ELSE()
+ 	FILE(GLOB SRC_OS src/unix/*.c)
+ ENDIF()
+-FILE(GLOB SRC_GIT2 src/*.c src/transports/*.c src/xdiff/*.c)
++FILE(GLOB SRC_GIT2 src/*.c src/transports/*.c)
+ 
+ # Determine architecture of the machine
+ IF (CMAKE_SIZEOF_VOID_P EQUAL 8)
+@@ -313,6 +313,7 @@ ENDIF()
+ ADD_LIBRARY(git2 ${SRC_GIT2} ${SRC_OS} ${SRC_ZLIB} ${SRC_HTTP} ${SRC_REGEX} ${SRC_SHA1} ${WIN_RC})
+ TARGET_LINK_LIBRARIES(git2 ${SSL_LIBRARIES})
+ TARGET_LINK_LIBRARIES(git2 ${SSH_LIBRARIES})
++TARGET_LINK_LIBRARIES(git2 -lxdiff)
+ TARGET_OS_LIBRARIES(git2)
+ 
+ # Workaround for Cmake bug #0011240 (see http://public.kitware.com/Bug/view.php?id=11240)
+@@ -388,6 +389,7 @@ IF (BUILD_CLAR)
+ 
+ 	TARGET_LINK_LIBRARIES(libgit2_clar ${SSL_LIBRARIES})
+ 	TARGET_LINK_LIBRARIES(libgit2_clar ${SSH_LIBRARIES})
++	TARGET_LINK_LIBRARIES(libgit2_clar -lxdiff)
+ 	TARGET_OS_LIBRARIES(libgit2_clar)
+ 	MSVC_SPLIT_SOURCES(libgit2_clar)
+ 
