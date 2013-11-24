@@ -1,6 +1,6 @@
 Name: libgit2
-Version: 0.19.0
-Release: 2%{?dist}
+Version: 0.20.0
+Release: 1%{?dist}
 Summary: A C implementation of the Git core methods as a library
 
 License: GPLv2 with exceptions
@@ -86,6 +86,9 @@ make install DESTDIR=%{buildroot}
 
 
 %changelog
+* Sun Nov 24 2013 Ignacio Casal Quinteiro <icq@gnome.org> - 0.20.0-1
+- 0.20.0
+
 * Sat Aug 03 2013 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0.19.0-2
 - Rebuilt for https://fedoraproject.org/wiki/Fedora_20_Mass_Rebuild
 
