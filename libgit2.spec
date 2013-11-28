@@ -10,7 +10,7 @@ URL: http://libgit2.github.com/
 Source0: https://github.com/%{name}/%{name}/archive/%{commit}/%{name}-%{version}.tar.gz
 
 # Use system libxdiff
-Patch0: libgit2-0.19.0-system-libxdiff.patch
+Patch0: libgit2-0.20.0-system-libxdiff.patch
 
 # Add htonl() and friends declarations on non-x86 arches
 Patch1: libgit2-0.19.0-non-x86.patch
