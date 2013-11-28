@@ -1,3 +1,5 @@
+%global commit 43cb8b32428b1b29994874349ec22eb5372e152c
+
 Name: libgit2
 Version: 0.20.0
 Release: 1%{?dist}
@@ -5,7 +7,7 @@ Summary: A C implementation of the Git core methods as a library
 
 License: GPLv2 with exceptions
 URL: http://libgit2.github.com/
-Source0: https://github.com/libgit2/libgit2/archive/v%{version}.tar.gz
+Source0: https://github.com/%{name}/%{name}/archive/%{commit}/%{name}-%{version}.tar.gz
 
 # Use system libxdiff
 Patch0: libgit2-0.19.0-system-libxdiff.patch
