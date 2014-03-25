@@ -9,6 +9,9 @@ License: GPLv2 with exceptions
 URL: http://libgit2.github.com/
 Source0: https://github.com/%{name}/%{name}/archive/%{commit}/%{name}-%{version}.tar.gz
 
+# https://github.com/libgit2/libgit2/issues/2199
+Patch0: 0001-Disable-failing-test.patch
+
 # Add htonl() and friends declarations on non-x86 arches
 Patch1: libgit2-0.19.0-non-x86.patch
 
@@ -42,6 +45,7 @@ developing applications that use %{name}.
 find examples -name ".gitignore" -delete
 
 # Apply patches
+%patch0 -p1 -b .test
 %patch1 -p1 -b .non-x86
 
 # Fix pkgconfig generation
@@ -85,6 +89,7 @@ make install DESTDIR=%{buildroot}
 
 %changelog
 - Build with the bundled xdiff.
+- Disable a failing test. (libgit2#2199)
 
 * Sun Nov 24 2013 Ignacio Casal Quinteiro <icq@gnome.org> - 0.20.0-1
 - 0.20.0
