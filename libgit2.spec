@@ -60,7 +60,7 @@ rm -rf deps
 
 
 %build
-%cmake .
+%cmake -DTHREADSAFE:BOOL=1 .
 make %{_smp_mflags}
 
 
@@ -92,6 +92,7 @@ make install DESTDIR=%{buildroot}
 - Build with the bundled xdiff.
 - Disable a failing test. (libgit2#2199)
 - Add missing build requirement on libssh2. (RHBZ#1039433)
+- Build a thread-safe libgit2.
 
 * Sun Nov 24 2013 Ignacio Casal Quinteiro <icq@gnome.org> - 0.20.0-1
 - 0.20.0
