@@ -9,18 +9,16 @@ License: GPLv2 with exceptions
 URL: http://libgit2.github.com/
 Source0: https://github.com/%{name}/%{name}/archive/%{commit}/%{name}-%{version}.tar.gz
 
-# Use system libxdiff
-Patch0: libgit2-0.20.0-system-libxdiff.patch
-
 # Add htonl() and friends declarations on non-x86 arches
 Patch1: libgit2-0.19.0-non-x86.patch
 
 BuildRequires: cmake >= 2.6
 BuildRequires: http-parser-devel
-BuildRequires: libxdiff-devel
 BuildRequires: openssl-devel
 BuildRequires: python
 BuildRequires: zlib-devel
+
+Provides: bundled(libxdiff)
 
 %description
 libgit2 is a portable, pure C implementation of the Git core methods 
@@ -44,7 +42,6 @@ developing applications that use %{name}.
 find examples -name ".gitignore" -delete
 
 # Apply patches
-%patch0 -p1 -b .system-libxdiff
 %patch1 -p1 -b .non-x86
 
 # Fix pkgconfig generation
@@ -55,7 +52,6 @@ sed -i 's/ionline/xonline/' CMakeLists.txt
 
 # Remove bundled libraries
 rm -rf deps
-rm -rf src/xdiff
 
 
 %build
@@ -88,6 +84,8 @@ make install DESTDIR=%{buildroot}
 
 
 %changelog
+- Build with the bundled xdiff.
+
 * Sun Nov 24 2013 Ignacio Casal Quinteiro <icq@gnome.org> - 0.20.0-1
 - 0.20.0
 
