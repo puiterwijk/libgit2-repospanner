@@ -17,6 +17,7 @@ Patch1: libgit2-0.19.0-non-x86.patch
 
 BuildRequires: cmake >= 2.6
 BuildRequires: http-parser-devel
+BuildRequires: libssh2
 BuildRequires: openssl-devel
 BuildRequires: python
 BuildRequires: zlib-devel
@@ -90,6 +91,7 @@ make install DESTDIR=%{buildroot}
 %changelog
 - Build with the bundled xdiff.
 - Disable a failing test. (libgit2#2199)
+- Add missing build requirement on libssh2. (RHBZ#1039433)
 
 * Sun Nov 24 2013 Ignacio Casal Quinteiro <icq@gnome.org> - 0.20.0-1
 - 0.20.0
