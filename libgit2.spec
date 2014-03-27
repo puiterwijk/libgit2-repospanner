@@ -2,7 +2,7 @@
 
 Name: libgit2
 Version: 0.20.0
-Release: 2%{?dist}
+Release: 3%{?dist}
 Summary: A C implementation of the Git core methods as a library
 
 License: GPLv2 with exceptions
@@ -17,7 +17,7 @@ Patch1: libgit2-0.19.0-non-x86.patch
 
 BuildRequires: cmake >= 2.6
 BuildRequires: http-parser-devel
-BuildRequires: libssh2
+BuildRequires: libssh2-devel
 BuildRequires: openssl-devel
 BuildRequires: python
 BuildRequires: zlib-devel
@@ -89,6 +89,9 @@ make install DESTDIR=%{buildroot}
 
 
 %changelog
+* Thu Mar 27 2014 Mathieu Bridon <bochecha@fedoraproject.org> - 0.20.0-3
+- Fix build requirement on libssh2-devel. (RHBZ#1039433)
+
 * Tue Mar 25 2014 Mathieu Bridon <bochecha@fedoraproject.org> - 0.20.0-2
 - Build with the bundled xdiff.
 - Disable a failing test. (libgit2#2199)
