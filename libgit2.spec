@@ -2,7 +2,7 @@
 
 Name: libgit2
 Version: 0.20.0
-Release: 3%{?dist}
+Release: 4%{?dist}
 Summary: A C implementation of the Git core methods as a library
 
 License: GPLv2 with exceptions
@@ -65,7 +65,10 @@ make %{_smp_mflags}
 
 
 %check
+# remove when rhbz#1105552 is fixed:
+%ifnarch ppc64 s390x
 ctest -V
+%endif
 
 
 %install
@@ -89,6 +92,9 @@ make install DESTDIR=%{buildroot}
 
 
 %changelog
+* Fri Jun 06 2014 Karsten Hopp <karsten@redhat.com> 0.20.0-4
+- temporarily disable checks on ppc64 and s390x (Bugzilla 1105552)
+
 * Thu Mar 27 2014 Mathieu Bridon <bochecha@fedoraproject.org> - 0.20.0-3
 - Fix build requirement on libssh2-devel. (RHBZ#1039433)
 
