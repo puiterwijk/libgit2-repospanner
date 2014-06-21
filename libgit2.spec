@@ -5,10 +5,7 @@ Summary:        C implementation of the Git core methods as a library with a sol
 License:        GPLv2 with exceptions
 URL:            http://libgit2.github.com/
 Source0:        https://github.com/libgit2/libgit2/archive/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
-
-# Add htonl() and friends declarations on non-x86 arches
-#Patch1:         libgit2-0.19.0-non-x86.patch
-BuildRequires:  cmake >= 2.6
+BuildRequires:  cmake
 BuildRequires:  http-parser-devel
 BuildRequires:  libssh2-devel
 BuildRequires:  openssl-devel
@@ -26,7 +23,7 @@ with bindings.
 Summary:        Development files for %{name}
 Requires:       %{name}%{?_isa} = %{version}-%{release}
 
-%description devel
+%description    devel
 This package contains libraries and header files for
 developing applications that use %{name}.
 
@@ -34,9 +31,6 @@ developing applications that use %{name}.
 %setup -q
 # Remove VCS files from examples
 find examples -name ".gitignore" -delete -print
-
-# Apply patches
-#%patch1 -p1 -b .non-x86
 
 # Fix pkgconfig generation
 sed -i 's|@CMAKE_INSTALL_PREFIX@/||' libgit2.pc.in
@@ -48,7 +42,7 @@ sed -i 's/ionline/xonline/' CMakeLists.txt
 rm -frv deps
 
 %build
-%cmake -DTHREADSAFE:BOOL=1 .
+%cmake -DTHREADSAFE=ON .
 make %{?_smp_mflags}
 
 %install
@@ -56,7 +50,7 @@ make %{?_smp_mflags}
 
 %check
 # remove when rhbz#1105552 is fixed:
-%ifnarch ppc64 s390x
+%ifnarch %{power64} s390x
 ctest -V
 %endif
 
