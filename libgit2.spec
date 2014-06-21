@@ -1,28 +1,20 @@
-%global commit 43cb8b32428b1b29994874349ec22eb5372e152c
-
-Name: libgit2
-Version: 0.20.0
-Release: 4%{?dist}
-Summary: A C implementation of the Git core methods as a library
-
-License: GPLv2 with exceptions
-URL: http://libgit2.github.com/
-Source0: https://github.com/%{name}/%{name}/archive/%{commit}/%{name}-%{version}.tar.gz
-
-# https://github.com/libgit2/libgit2/issues/2199
-Patch0: 0001-Disable-failing-test.patch
+Name:           libgit2
+Version:        0.21.0
+Release:        1%{?dist}
+Summary:        C implementation of the Git core methods as a library with a solid API
+License:        GPLv2 with exceptions
+URL:            http://libgit2.github.com/
+Source0:        https://github.com/libgit2/libgit2/archive/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
 
 # Add htonl() and friends declarations on non-x86 arches
-Patch1: libgit2-0.19.0-non-x86.patch
-
-BuildRequires: cmake >= 2.6
-BuildRequires: http-parser-devel
-BuildRequires: libssh2-devel
-BuildRequires: openssl-devel
-BuildRequires: python
-BuildRequires: zlib-devel
-
-Provides: bundled(libxdiff)
+#Patch1:         libgit2-0.19.0-non-x86.patch
+BuildRequires:  cmake >= 2.6
+BuildRequires:  http-parser-devel
+BuildRequires:  libssh2-devel
+BuildRequires:  openssl-devel
+BuildRequires:  python
+BuildRequires:  zlib-devel
+Provides:       bundled(libxdiff)
 
 %description
 libgit2 is a portable, pure C implementation of the Git core methods 
@@ -30,24 +22,21 @@ provided as a re-entrant linkable library with a solid API, allowing
 you to write native speed custom Git applications in any language
 with bindings.
 
-
-%package devel
-Summary: Development files for %{name}
-Requires: %{name}%{?_isa} = %{version}-%{release}
+%package        devel
+Summary:        Development files for %{name}
+Requires:       %{name}%{?_isa} = %{version}-%{release}
 
 %description devel
-The %{name}-devel package contains libraries and header files for
+This package contains libraries and header files for
 developing applications that use %{name}.
-
 
 %prep
 %setup -q
 # Remove VCS files from examples
-find examples -name ".gitignore" -delete
+find examples -name ".gitignore" -delete -print
 
 # Apply patches
-%patch0 -p1 -b .test
-%patch1 -p1 -b .non-x86
+#%patch1 -p1 -b .non-x86
 
 # Fix pkgconfig generation
 sed -i 's|@CMAKE_INSTALL_PREFIX@/||' libgit2.pc.in
@@ -56,13 +45,14 @@ sed -i 's|@CMAKE_INSTALL_PREFIX@/||' libgit2.pc.in
 sed -i 's/ionline/xonline/' CMakeLists.txt
 
 # Remove bundled libraries
-rm -rf deps
-
+rm -frv deps
 
 %build
 %cmake -DTHREADSAFE:BOOL=1 .
-make %{_smp_mflags}
+make %{?_smp_mflags}
 
+%install
+%make_install
 
 %check
 # remove when rhbz#1105552 is fixed:
@@ -70,28 +60,25 @@ make %{_smp_mflags}
 ctest -V
 %endif
 
-
-%install
-make install DESTDIR=%{buildroot}
-
-
 %post -p /sbin/ldconfig
+
 %postun -p /sbin/ldconfig
 
-
 %files
-%doc README.md COPYING AUTHORS
+%doc COPYING AUTHORS
 %{_libdir}/libgit2.so.*
 
-
 %files devel
-%doc docs examples
+%doc docs examples README.md
 %{_libdir}/libgit2.so
 %{_libdir}/pkgconfig/libgit2.pc
-%{_includedir}/git2*
-
+%{_includedir}/git2.h
+%{_includedir}/git2/
 
 %changelog
+* Sat Jun 21 2014 Christopher Meng <rpm@cicku.me> - 0.21.0-1
+- Update to 0.21.0
+
 * Fri Jun 06 2014 Karsten Hopp <karsten@redhat.com> 0.20.0-4
 - temporarily disable checks on ppc64 and s390x (Bugzilla 1105552)
 
