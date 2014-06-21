@@ -50,7 +50,7 @@ make %{?_smp_mflags}
 
 %check
 # remove when rhbz#1105552 is fixed:
-%ifnarch %{power64} s390x
+%ifnarch %{arm} %{power64} s390x
 ctest -V
 %endif
 
