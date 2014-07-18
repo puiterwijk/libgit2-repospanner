@@ -1,10 +1,13 @@
 Name:           libgit2
 Version:        0.21.0
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        C implementation of the Git core methods as a library with a solid API
 License:        GPLv2 with exceptions
 URL:            http://libgit2.github.com/
 Source0:        https://github.com/libgit2/libgit2/archive/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
+# https://github.com/libgit2/libgit2/issues/2450
+Patch0:         libgit2-0.21.0-arm.patch
+
 BuildRequires:  cmake
 BuildRequires:  http-parser-devel
 BuildRequires:  libssh2-devel
@@ -29,6 +32,7 @@ developing applications that use %{name}.
 
 %prep
 %setup -q
+%patch0 -p1
 # Remove VCS files from examples
 find examples -name ".gitignore" -delete -print
 
@@ -50,7 +54,7 @@ make %{?_smp_mflags}
 
 %check
 # remove when rhbz#1105552 is fixed:
-%ifnarch %{arm} %{power64} s390x
+%ifnarch ppc64 s390x
 ctest -V
 %endif
 
@@ -70,6 +74,9 @@ ctest -V
 %{_includedir}/git2/
 
 %changelog
+* Fri Jul 18 2014 Yaakov Selkowitz <yselkowi@redhat.com> - 0.21.0-2
+- Fix memory alignment issues on arm, aarch64, ppc64le (#1115905)
+
 * Sat Jun 21 2014 Christopher Meng <rpm@cicku.me> - 0.21.0-1
 - Update to 0.21.0
 
