@@ -1,18 +1,17 @@
 Name:           libgit2
-Version:        0.21.0
-Release:        2%{?dist}
+Version:        0.21.1
+Release:        1%{?dist}
 Summary:        C implementation of the Git core methods as a library with a solid API
 License:        GPLv2 with exceptions
 URL:            http://libgit2.github.com/
 Source0:        https://github.com/libgit2/libgit2/archive/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
 # https://github.com/libgit2/libgit2/issues/2450
-Patch0:         libgit2-0.21.0-arm.patch
-
+#Patch0:         libgit2-0.21.0-arm.patch
 BuildRequires:  cmake
 BuildRequires:  http-parser-devel
 BuildRequires:  libssh2-devel
 BuildRequires:  openssl-devel
-BuildRequires:  python
+BuildRequires:  python2
 BuildRequires:  zlib-devel
 Provides:       bundled(libxdiff)
 
@@ -32,7 +31,7 @@ developing applications that use %{name}.
 
 %prep
 %setup -q
-%patch0 -p1
+
 # Remove VCS files from examples
 find examples -name ".gitignore" -delete -print
 
@@ -47,7 +46,7 @@ rm -frv deps
 
 %build
 %cmake -DTHREADSAFE=ON .
-make %{?_smp_mflags}
+%make_build
 
 %install
 %make_install
@@ -63,17 +62,20 @@ ctest -V
 %postun -p /sbin/ldconfig
 
 %files
-%doc COPYING AUTHORS
+%doc COPYING
 %{_libdir}/libgit2.so.*
 
 %files devel
-%doc docs examples README.md
+%doc AUTHORS docs examples README.md
 %{_libdir}/libgit2.so
 %{_libdir}/pkgconfig/libgit2.pc
 %{_includedir}/git2.h
 %{_includedir}/git2/
 
 %changelog
+* Wed Aug 06 2014 Christopher Meng <rpm@cicku.me> - 0.21.1-1
+- Update to 0.21.1
+
 * Fri Jul 18 2014 Yaakov Selkowitz <yselkowi@redhat.com> - 0.21.0-2
 - Fix memory alignment issues on arm, aarch64, ppc64le (#1115905)
 
