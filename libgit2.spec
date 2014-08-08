@@ -46,7 +46,7 @@ rm -frv deps
 
 %build
 %cmake -DTHREADSAFE=ON .
-%make_build
+make %{?_smp_mflags}
 
 %install
 %make_install
