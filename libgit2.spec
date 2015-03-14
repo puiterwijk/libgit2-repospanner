@@ -1,5 +1,5 @@
 Name:           libgit2
-Version:        0.21.1
+Version:        0.21.5
 Release:        1%{?dist}
 Summary:        C implementation of the Git core methods as a library with a solid API
 License:        GPLv2 with exceptions
@@ -7,6 +7,7 @@ URL:            http://libgit2.github.com/
 Source0:        https://github.com/libgit2/libgit2/archive/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
 # https://github.com/libgit2/libgit2/issues/2450
 #Patch0:         libgit2-0.21.0-arm.patch
+Patch0:         libgit2-0.21.0-segfault.patch
 BuildRequires:  cmake
 BuildRequires:  http-parser-devel
 BuildRequires:  libssh2-devel
@@ -44,6 +45,9 @@ sed -i 's/ionline/xonline/' CMakeLists.txt
 # Remove bundled libraries
 rm -frv deps
 
+# Run patches
+%patch0 -p1
+
 %build
 %cmake -DTHREADSAFE=ON .
 make %{?_smp_mflags}
@@ -73,6 +77,10 @@ ctest -V
 %{_includedir}/git2/
 
 %changelog
+* Sat Mar 14 2015 Veeti Paananen <veeti.paananen@rojekti.fi> - 0.21.5-1
+- Update to 0.21.5
+- Backport crash fix
+
 * Wed Aug 06 2014 Christopher Meng <rpm@cicku.me> - 0.21.1-1
 - Update to 0.21.1
 

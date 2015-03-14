@@ -1,0 +1,30 @@
+From 0b6699b8dd75de99d9c7944c90f071c11b265bc5 Mon Sep 17 00:00:00 2001
+From: Veeti Paananen <veeti.paananen@rojekti.fi>
+Date: Mon, 16 Feb 2015 17:55:20 +0200
+Subject: [PATCH] Backport 6d20006f7e8dbc26cf07bf8a945bc6972642c303
+
+remote: check the relevance of the refspec when updating FETCH_HEAD
+
+Before trying to rtransform using the given refspec to figure out what
+the name of the upstream branch is on the remote, we must make sure
+that the target of the refspec applies to the current branch's
+upstream.
+---
+ src/remote.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/remote.c b/src/remote.c
+index aa70bb7..c8c6a84 100644
+--- a/src/remote.c
++++ b/src/remote.c
+@@ -917,6 +917,7 @@ static int remote_head_for_ref(git_remote_head **out, git_refspec *spec, git_vec
+ 
+ 	if ((!git_reference__is_branch(ref_name)) ||
+ 	    (error = git_branch_upstream_name(&upstream_name, repo, ref_name)) < 0 ||
++	    !git_refspec_dst_matches(spec, git_buf_cstr(&upstream_name)) ||
+ 	    (error = git_refspec_rtransform(&remote_name, spec, upstream_name.ptr)) < 0) {
+ 		/* Not an error if there is no upstream */
+ 		if (error == GIT_ENOTFOUND)
+-- 
+2.3.0
+
