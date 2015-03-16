@@ -56,10 +56,7 @@ make %{?_smp_mflags}
 %make_install
 
 %check
-# remove when rhbz#1105552 is fixed:
-%ifnarch ppc64 s390x
 ctest -V
-%endif
 
 %post -p /sbin/ldconfig
 
