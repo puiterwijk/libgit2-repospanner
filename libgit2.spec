@@ -1,15 +1,14 @@
 Name:           libgit2
-Version:        0.21.5
+Version:        0.24.6
 Release:        1%{?dist}
 Summary:        C implementation of the Git core methods as a library with a solid API
 License:        GPLv2 with exceptions
 URL:            http://libgit2.github.com/
 Source0:        https://github.com/libgit2/libgit2/archive/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
-# https://github.com/libgit2/libgit2/issues/2450
-#Patch0:         libgit2-0.21.0-arm.patch
-Patch0:         libgit2-0.21.0-segfault.patch
+
 BuildRequires:  cmake
 BuildRequires:  http-parser-devel
+BuildRequires:  libcurl-devel
 BuildRequires:  libssh2-devel
 BuildRequires:  openssl-devel
 BuildRequires:  python2
@@ -31,7 +30,7 @@ This package contains libraries and header files for
 developing applications that use %{name}.
 
 %prep
-%setup -q
+%autosetup -p1
 
 # Remove VCS files from examples
 find examples -name ".gitignore" -delete -print
@@ -45,35 +44,42 @@ sed -i 's/ionline/xonline/' CMakeLists.txt
 # Remove bundled libraries
 rm -frv deps
 
-# Run patches
-%patch0 -p1
+mkdir build
 
 %build
-%cmake -DTHREADSAFE=ON .
-make %{?_smp_mflags}
+pushd build
+  %cmake -DTHREADSAFE=ON ..
+  %make_build
+popd
 
 %install
-%make_install
+pushd build
+  %make_install
+popd
 
 %check
-ctest -V
+pushd build
+  ctest -VV
+popd
 
 %post -p /sbin/ldconfig
-
 %postun -p /sbin/ldconfig
 
 %files
-%doc COPYING
-%{_libdir}/libgit2.so.*
+%license COPYING
+%{_libdir}/%{name}.so.*
 
 %files devel
 %doc AUTHORS docs examples README.md
-%{_libdir}/libgit2.so
-%{_libdir}/pkgconfig/libgit2.pc
+%{_libdir}/%{name}.so
+%{_libdir}/pkgconfig/%{name}.pc
 %{_includedir}/git2.h
 %{_includedir}/git2/
 
 %changelog
+* Wed Mar 22 2017 Pete Walter <pwalter@fedoraproject.org> - 0.24.6-1
+- Update to 0.24.6
+
 * Sat Mar 14 2015 Veeti Paananen <veeti.paananen@rojekti.fi> - 0.21.5-1
 - Update to 0.21.5
 - Backport crash fix
