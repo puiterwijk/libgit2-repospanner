@@ -1,6 +1,6 @@
 Name:           libgit2
 Version:        0.24.6
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        C implementation of the Git core methods as a library with a solid API
 License:        GPLv2 with exceptions
 URL:            http://libgit2.github.com/
@@ -13,7 +13,6 @@ BuildRequires:  libssh2-devel
 BuildRequires:  openssl-devel
 BuildRequires:  python2
 BuildRequires:  zlib-devel
-BuildRequires:  libgit2
 Provides:       bundled(libxdiff)
 
 %description
@@ -58,9 +57,6 @@ pushd build
   %make_install
 popd
 
-# Include previous ABI version for temporary binary compatibility
-cp -a %{_libdir}/libgit2.so.*21* $RPM_BUILD_ROOT%{_libdir}
-
 %check
 pushd build
   ctest -VV
@@ -81,6 +77,9 @@ popd
 %{_includedir}/git2/
 
 %changelog
+* Thu Aug 10 2017 Pete Walter <pwalter@fedoraproject.org> - 0.24.6-2
+- Drop 0.21.5 ABI compat
+
 * Wed Mar 22 2017 Pete Walter <pwalter@fedoraproject.org> - 0.24.6-1
 - Update to 0.24.6
 - Include previous ABI version for temporary binary compatibility
