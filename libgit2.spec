@@ -1,11 +1,12 @@
 Name:           libgit2
-Version:        0.24.6
-Release:        2%{?dist}
+Version:        0.26.3
+Release:        1%{?dist}
 Summary:        C implementation of the Git core methods as a library with a solid API
 License:        GPLv2 with exceptions
 URL:            http://libgit2.github.com/
-Source0:        https://github.com/libgit2/libgit2/archive/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
+Source0:        https://github.com/libgit2/libgit2/archive/v%{version}/%{name}-%{version}.tar.gz
 
+BuildRequires:  gcc
 BuildRequires:  cmake
 BuildRequires:  http-parser-devel
 BuildRequires:  libcurl-devel
@@ -23,7 +24,7 @@ with bindings.
 
 %package        devel
 Summary:        Development files for %{name}
-Requires:       %{name}%{?_isa} = %{version}-%{release}
+Requires:       %{name}%{?_isa} = %{?epoch:%{epoch}:}%{version}-%{release}
 
 %description    devel
 This package contains libraries and header files for
@@ -44,21 +45,18 @@ sed -i 's/ionline/xonline/' CMakeLists.txt
 # Remove bundled libraries
 rm -frv deps
 
-mkdir build
-
 %build
-pushd build
+mkdir %{_target_platform}
+pushd %{_target_platform}
   %cmake -DTHREADSAFE=ON ..
-  %make_build
 popd
+%make_build -C %{_target_platform}
 
 %install
-pushd build
-  %make_install
-popd
+%make_install -C %{_target_platform}
 
 %check
-pushd build
+pushd %{_target_platform}
   ctest -VV
 popd
 
@@ -77,6 +75,9 @@ popd
 %{_includedir}/git2/
 
 %changelog
+* Mon Apr 30 2018 Pete Walter <pwalter@fedoraproject.org> - 0.26.3-1
+- Update to 0.26.3
+
 * Thu Aug 10 2017 Pete Walter <pwalter@fedoraproject.org> - 0.24.6-2
 - Drop 0.21.5 ABI compat
 
