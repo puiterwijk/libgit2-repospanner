@@ -14,6 +14,7 @@ BuildRequires:  libssh2-devel
 BuildRequires:  openssl-devel
 BuildRequires:  python2
 BuildRequires:  zlib-devel
+BuildRequires:  libgit2
 Provides:       bundled(libxdiff)
 
 %description
@@ -55,6 +56,9 @@ popd
 %install
 %make_install -C %{_target_platform}
 
+# Include previous ABI version for temporary binary compatibility
+cp -a %{_libdir}/libgit2.so.*24* $RPM_BUILD_ROOT%{_libdir}
+
 %check
 pushd %{_target_platform}
   ctest -VV
@@ -77,6 +81,7 @@ popd
 %changelog
 * Mon Apr 30 2018 Pete Walter <pwalter@fedoraproject.org> - 0.26.3-1
 - Update to 0.26.3
+- Include previous ABI version for temporary binary compatibility
 
 * Thu Aug 10 2017 Pete Walter <pwalter@fedoraproject.org> - 0.24.6-2
 - Drop 0.21.5 ABI compat
