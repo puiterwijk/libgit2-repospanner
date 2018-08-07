@@ -1,5 +1,5 @@
 Name:           libgit2
-Version:        0.26.5
+Version:        0.26.6
 Release:        1%{?dist}
 Summary:        C implementation of the Git core methods as a library with a solid API
 License:        GPLv2 with exceptions
@@ -79,6 +79,9 @@ popd
 %{_includedir}/git2/
 
 %changelog
+* Tue Aug 07 2018 Pete Walter <pwalter@fedoraproject.org> - 0.26.6-1
+- Update to 0.26.6
+
 * Tue Jul 10 2018 Pete Walter <pwalter@fedoraproject.org> - 0.26.5-1
 - Update to 0.26.5 (CVE-2018-10887, CVE-2018-10888)
 
