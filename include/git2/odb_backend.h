@@ -66,6 +66,11 @@ GIT_EXTERN(int) git_odb_backend_loose(
  */
 GIT_EXTERN(int) git_odb_backend_one_pack(git_odb_backend **out, const char *index_file);
 
+
+GIT_EXTERN(int) git_odb_backend_repospanner(
+	git_odb_backend **backend_out, git_odb_backend *fsbackend,
+	const char *objects_dir, git_repository *repository);
+
 /** Streaming mode */
 typedef enum {
 	GIT_STREAM_RDONLY = (1 << 1),

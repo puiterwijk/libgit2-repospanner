@@ -18,6 +18,7 @@
 #include "thread-utils.h"
 #include "git2/global.h"
 #include "transports/ssh.h"
+#include "repospanner.h"
 
 #if defined(GIT_MSVC_CRTDBG)
 #include "win32/w32_stack.h"
@@ -71,6 +72,9 @@ static int init_common(void)
 		(ret = git_curl_stream_global_init()) == 0 &&
 		(ret = git_mbedtls_stream_global_init()) == 0)
 		ret = git_mwindow_global_init();
+
+	if (ret == GIT_OK)
+		ret = repospanner_global_init();
 
 	GIT_MEMORY_BARRIER;
 

@@ -62,6 +62,13 @@ int git_odb__add_default_backends(
 	bool as_alternates, int alternate_depth);
 
 /*
+ * Add the repoSpanner backend if needed.
+ */
+int git_odb__add_repospanner_backend(
+	git_odb *db, const char *objects_dir,
+	git_repository *repo);
+
+/*
  * Hash a git_rawobj internally.
  * The `git_rawobj` is supposed to be previously initialized
  */

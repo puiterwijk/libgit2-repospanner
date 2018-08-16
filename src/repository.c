@@ -1088,7 +1088,8 @@ int git_repository_odb__weakptr(git_odb **out, git_repository *repo)
 		GIT_REFCOUNT_OWN(odb, repo);
 
 		if ((error = git_odb__set_caps(odb, GIT_ODB_CAP_FROM_OWNER)) < 0 ||
-			(error = git_odb__add_default_backends(odb, odb_path.ptr, 0, 0)) < 0) {
+			(error = git_odb__add_default_backends(odb, odb_path.ptr, 0, 0)) < 0 ||
+			(error = git_odb__add_repospanner_backend(odb, odb_path.ptr, repo)) < 0) {
 			git_odb_free(odb);
 			return error;
 		}

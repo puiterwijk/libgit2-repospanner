@@ -26,6 +26,7 @@
  * We work under the assumption that most objects for long-running
  * operations will be packed
  */
+#define GIT_REPOSPANNER_PRIORITY 0
 #define GIT_LOOSE_PRIORITY 1
 #define GIT_PACKED_PRIORITY 2
 
@@ -570,6 +571,28 @@ int git_odb__add_default_backends(
 		return -1;
 
 	return load_alternates(db, objects_dir, alternate_depth);
+}
+
+int git_odb__add_repospanner_backend(
+	git_odb *db, const char *objects_dir,
+	git_repository *repo)
+{
+	int error;
+	git_odb_backend *backend;
+	git_odb_backend *fsdb;
+
+	if ((error = git_odb_get_backend(&fsdb, db, GIT_LOOSE_PRIORITY)) != GIT_OK)
+		return error;
+
+	error = git_odb_backend_repospanner(&backend, fsdb, objects_dir, repo);
+	if (error == GIT_ENOTFOUND) {
+		// This repo is not repoSpanner enabled, nothing to see here
+		return GIT_OK;
+	} else if (error != GIT_OK) {
+		return error;
+	}
+
+	return add_backend_internal(db, backend, GIT_REPOSPANNER_PRIORITY, false, 0);
 }
 
 static int load_alternates(git_odb *odb, const char *objects_dir, int alternate_depth)

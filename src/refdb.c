@@ -35,6 +35,7 @@ int git_refdb_new(git_refdb **out, git_repository *repo)
 
 int git_refdb_open(git_refdb **out, git_repository *repo)
 {
+	int error;
 	git_refdb *db;
 	git_refdb_backend *dir;
 
@@ -45,10 +46,19 @@ int git_refdb_open(git_refdb **out, git_repository *repo)
 	if (git_refdb_new(&db, repo) < 0)
 		return -1;
 
-	/* Add the default (filesystem) backend */
-	if (git_refdb_backend_fs(&dir, repo) < 0) {
-		git_refdb_free(db);
-		return -1;
+	/* First see if we need the repoSpanner backend */
+	error = git_refdb_backend_repospanner(&dir, repo);
+	if (error != GIT_OK) {
+		if (error == GIT_ENOTFOUND) {
+			/* This repo is not repoSpanner-enabled */
+			/* Attempt the default (filesystem) backend */
+			if (git_refdb_backend_fs(&dir, repo) < 0) {
+				git_refdb_free(db);
+				return -1;
+			}
+		} else {
+			return error;
+		}
 	}
 
 	db->repo = repo;
