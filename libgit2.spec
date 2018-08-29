@@ -1,6 +1,7 @@
 Name:           libgit2
+Epoch:		1
 Version:        0.26.8
-Release:        1%{?dist}
+Release:        1.withrepospanner%{?dist}
 Summary:        C implementation of the Git core methods as a library with a solid API
 License:        GPLv2 with exceptions
 URL:            https://libgit2.org
@@ -8,15 +9,19 @@ Source0:        https://github.com/libgit2/libgit2/archive/v%{version}/%{name}-%
 # https://github.com/libgit2/libgit2/commit/415a8ae9c9b6ac18f0524b6af8e58408b426457d
 Patch0001:      0001-tests-don-t-run-buf-oom-on-32-bit-systems.patch
 
+%global _default_patch_fuzz 2
+Patch0:		Add-repoSpanner-integration.patch
+
 BuildRequires:  gcc
-BuildRequires:  cmake
+BuildRequires:  cmake >= 2.8.11
+BuildRequires:  ninja-build
 BuildRequires:  http-parser-devel
 BuildRequires:  libcurl-devel
 BuildRequires:  libssh2-devel
 BuildRequires:  openssl-devel
 BuildRequires:  python2
 BuildRequires:  zlib-devel
-BuildRequires:  libgit2
+# BuildRequires:  libgit2
 Provides:       bundled(libxdiff)
 
 %description
@@ -56,7 +61,7 @@ popd
 %make_install -C %{_target_platform}
 
 # Include previous ABI version for temporary binary compatibility
-cp -a %{_libdir}/libgit2.so.*24* $RPM_BUILD_ROOT%{_libdir}
+#cp -a %{_libdir}/libgit2.so.*24* $RPM_BUILD_ROOT%{_libdir}
 
 %check
 pushd %{_target_platform}

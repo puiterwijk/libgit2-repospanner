@@ -1,0 +1,1384 @@
+From 8844af96af9d94e4660b946ff628e10844e220b8 Mon Sep 17 00:00:00 2001
+From: Patrick Uiterwijk <puiterwijk@redhat.com>
+Date: Thu, 16 Aug 2018 13:14:44 +0200
+Subject: [PATCH 1/4] Add repoSpanner integration
+
+Signed-off-by: Patrick Uiterwijk <puiterwijk@redhat.com>
+---
+ include/git2/odb_backend.h |   5 +
+ src/global.c               |   4 +
+ src/odb.c                  |  23 ++
+ src/odb.h                  |   7 +
+ src/odb_repospanner.c      | 212 ++++++++++++++
+ src/refdb.c                |  18 +-
+ src/refdb_repospanner.c    | 575 +++++++++++++++++++++++++++++++++++++
+ src/repository.c           |   3 +-
+ src/repospanner.c          | 241 ++++++++++++++++
+ src/repospanner.h          |  21 ++
+ 10 files changed, 1104 insertions(+), 5 deletions(-)
+ create mode 100644 src/odb_repospanner.c
+ create mode 100644 src/refdb_repospanner.c
+ create mode 100644 src/repospanner.c
+ create mode 100644 src/repospanner.h
+
+diff --git a/include/git2/odb_backend.h b/include/git2/odb_backend.h
+index 9199538ce..61b38a73f 100644
+--- a/include/git2/odb_backend.h
++++ b/include/git2/odb_backend.h
+@@ -66,6 +66,11 @@ GIT_EXTERN(int) git_odb_backend_loose(
+  */
+ GIT_EXTERN(int) git_odb_backend_one_pack(git_odb_backend **out, const char *index_file);
+ 
++
++GIT_EXTERN(int) git_odb_backend_repospanner(
++	git_odb_backend **backend_out, git_odb_backend *fsbackend,
++	const char *objects_dir, git_repository *repository);
++
+ /** Streaming mode */
+ typedef enum {
+ 	GIT_STREAM_RDONLY = (1 << 1),
+diff --git a/src/global.c b/src/global.c
+index d33772e91..9e8071306 100644
+--- a/src/global.c
++++ b/src/global.c
+@@ -18,6 +18,7 @@
+ #include "thread-utils.h"
+ #include "git2/global.h"
+ #include "transports/ssh.h"
++#include "repospanner.h"
+ 
+ #if defined(GIT_MSVC_CRTDBG)
+ #include "win32/w32_stack.h"
+@@ -72,6 +73,9 @@ static int init_common(void)
+ 		(ret = git_mbedtls_stream_global_init()) == 0)
+ 		ret = git_mwindow_global_init();
+ 
++	if (ret == GIT_OK)
++		ret = repospanner_global_init();
++
+ 	GIT_MEMORY_BARRIER;
+ 
+ 	return ret;
+diff --git a/src/odb.c b/src/odb.c
+index f1c7ebcbd..b005f8ea9 100644
+--- a/src/odb.c
++++ b/src/odb.c
+@@ -26,6 +26,7 @@
+  * We work under the assumption that most objects for long-running
+  * operations will be packed
+  */
++#define GIT_REPOSPANNER_PRIORITY 0
+ #define GIT_LOOSE_PRIORITY 1
+ #define GIT_PACKED_PRIORITY 2
+ 
+@@ -572,6 +573,28 @@ int git_odb__add_default_backends(
+ 	return load_alternates(db, objects_dir, alternate_depth);
+ }
+ 
++int git_odb__add_repospanner_backend(
++	git_odb *db, const char *objects_dir,
++	git_repository *repo)
++{
++	int error;
++	git_odb_backend *backend;
++	git_odb_backend *fsdb;
++
++	if ((error = git_odb_get_backend(&fsdb, db, GIT_LOOSE_PRIORITY)) != GIT_OK)
++		return error;
++
++	error = git_odb_backend_repospanner(&backend, fsdb, objects_dir, repo);
++	if (error == GIT_ENOTFOUND) {
++		// This repo is not repoSpanner enabled, nothing to see here
++		return GIT_OK;
++	} else if (error != GIT_OK) {
++		return error;
++	}
++
++	return add_backend_internal(db, backend, GIT_REPOSPANNER_PRIORITY, false, 0);
++}
++
+ static int load_alternates(git_odb *odb, const char *objects_dir, int alternate_depth)
+ {
+ 	git_buf alternates_path = GIT_BUF_INIT;
+diff --git a/src/odb.h b/src/odb.h
+index b354108e7..0685ebf03 100644
+--- a/src/odb.h
++++ b/src/odb.h
+@@ -61,6 +61,13 @@ int git_odb__add_default_backends(
+ 	git_odb *db, const char *objects_dir,
+ 	bool as_alternates, int alternate_depth);
+ 
++/*
++ * Add the repoSpanner backend if needed.
++ */
++int git_odb__add_repospanner_backend(
++	git_odb *db, const char *objects_dir,
++	git_repository *repo);
++
+ /*
+  * Hash a git_rawobj internally.
+  * The `git_rawobj` is supposed to be previously initialized
+diff --git a/src/odb_repospanner.c b/src/odb_repospanner.c
+new file mode 100644
+index 000000000..cb347ccf5
+--- /dev/null
++++ b/src/odb_repospanner.c
+@@ -0,0 +1,212 @@
++/*
++ * Copyright (C) the libgit2 contributors. All rights reserved.
++ *
++ * This file is part of libgit2, distributed under the GNU GPL v2 with
++ * a Linking Exception. For full terms see the included COPYING file.
++ */
++
++#include "common.h"
++
++#include "git2/object.h"
++#include "git2/sys/odb_backend.h"
++#include "fileops.h"
++#include "hash.h"
++#include "odb.h"
++#include "array.h"
++#include "oidmap.h"
++
++#include "repospanner.h"
++
++#include "git2/odb_backend.h"
++#include "git2/types.h"
++#include "git2/pack.h"
++
++struct repospanner_odb {
++	git_odb_backend parent;
++
++	repoSpanner_client *client;
++
++	git_odb_backend *fsdb;
++	const char *objects_dir;
++	size_t objects_dirlen;
++	git_repository *repo;
++};
++
++static int object_file_name(
++	git_buf *name, const struct repospanner_odb *be, const git_oid *id)
++{
++	size_t alloclen;
++	size_t objects_dirlen = be->objects_dirlen;
++
++	/* expand length for object root + 40 hex sha1 chars + 2 * '/' + '\0' */
++	GITERR_CHECK_ALLOC_ADD(&alloclen, objects_dirlen, GIT_OID_HEXSZ);
++	GITERR_CHECK_ALLOC_ADD(&alloclen, alloclen, 3);
++	if (git_buf_grow(name, alloclen) < 0)
++		return -1;
++
++	git_buf_set(name, be->objects_dir, objects_dirlen);
++	git_path_to_dir(name);
++
++	/* loose object filename: aa/aaa... (41 bytes) */
++	git_oid_pathfmt(name->ptr + name->size, id);
++	name->size += GIT_OID_HEXSZ + 1;
++	name->ptr[name->size] = '\0';
++
++	return git_futils_mkdir_relative(
++		name->ptr + objects_dirlen, be->objects_dir, 0755,
++		GIT_MKDIR_PATH | GIT_MKDIR_SKIP_LAST | GIT_MKDIR_VERIFY_DIR, NULL);
++}
++
++
++static int rs_odb_not_implemented(const char *fname)
++{
++	giterr_set(GITERR_INVALID, "function %s not implemented for repoSpanner", fname);
++	return GIT_EINVALID;
++}
++
++static int get_request_for_object(CURL **out, struct repospanner_odb *backend, const git_oid *oid)
++{
++	git_buf pathbuf = GIT_BUF_INIT;
++
++	if (git_buf_puts(&pathbuf, "simple/object/") != GIT_OK)
++		return GIT_ERROR;
++	if (git_buf_puts(&pathbuf, git_oid_tostr_s(oid)) != GIT_OK)
++		return GIT_ERROR;
++
++	return repospanner_prepare_request(out, backend->client, git_buf_cstr(&pathbuf));
++}
++
++static int impl__write(
++	git_odb_backend *_backend,
++	const git_oid *oid,
++	const void *data,
++	size_t len,
++	git_otype type)
++{
++	(void)_backend;
++	(void)oid;
++	(void)data;
++	(void)len;
++	(void)type;
++	return rs_odb_not_implemented("write");
++}
++
++static int retrieve_file(struct repospanner_odb *backend, const git_oid *oid)
++{
++	int error;
++	CURL *req;
++	git_buf final_path = GIT_BUF_INIT;
++	FILE *outfile;
++
++	if ((error = get_request_for_object(&req, backend, oid)) != GIT_OK)
++		return error;
++
++	if ((error = object_file_name(&final_path, backend, oid)) != GIT_OK)
++		return error;
++
++	outfile = fopen(git_buf_cstr(&final_path), "wb");
++	if (outfile == NULL) {
++		giterr_set(GITERR_NOMEMORY, "Could not open file buffer at %s", git_buf_cstr(&final_path));
++		return GIT_ERROR;
++	}
++
++	curl_easy_setopt(req, CURLOPT_WRITEDATA, outfile);
++	if ((error = repospanner_check_curl(req)) != GIT_OK)
++		goto fail;
++
++	if (fclose(outfile))
++		goto fail;
++
++	return GIT_OK;
++fail:
++	fclose(outfile);
++	unlink(git_buf_cstr(&final_path));
++
++	return error;
++}
++
++
++static int impl__exists(git_odb_backend *_backend, const git_oid *oid)
++{
++	int error;
++	struct repospanner_odb *backend = (struct repospanner_odb *)_backend;
++
++	if ((error = retrieve_file(backend, oid)) != GIT_OK) {
++		if (error == GIT_ENOTFOUND)
++			return 0;
++		else
++			return error;
++	}
++
++	return 1;
++}
++
++static int impl__read(void **buffer_p, size_t *len_p, git_otype *type_p, git_odb_backend *_backend, const git_oid *oid)
++{
++	int error;
++	struct repospanner_odb *backend = (struct repospanner_odb *)_backend;
++
++	if ((error = retrieve_file(backend, oid)) != GIT_OK)
++		return error;
++
++	return backend->fsdb->read(buffer_p, len_p, type_p, backend->fsdb, oid);
++}
++
++static int impl__read_header(size_t *len_p, git_otype *type_p, git_odb_backend *_backend, const git_oid *oid)
++{
++	int error;
++	struct repospanner_odb *backend = (struct repospanner_odb *)_backend;
++
++	if ((error = retrieve_file(backend, oid)) != GIT_OK)
++		return error;
++
++	return backend->fsdb->read_header(len_p, type_p, backend->fsdb, oid);
++}
++
++static void impl__free(git_odb_backend *_backend)
++{
++	struct repospanner_odb *backend = (struct repospanner_odb *)_backend;
++
++	git__free(backend);
++}
++
++int git_odb_backend_repospanner(
++	git_odb_backend **out, git_odb_backend *fsbackend,
++	const char *objects_dir, git_repository *repository)
++{
++	struct repospanner_odb *db;
++	int error = GIT_OK;
++	repoSpanner_client *client;
++	size_t objects_dirlen;
++	char *new_objects_dir;
++
++	assert(out);
++
++	objects_dirlen = strlen(objects_dir);
++	new_objects_dir = git__calloc(objects_dirlen + 1, sizeof(char));
++	memcpy(new_objects_dir, objects_dir, objects_dirlen);
++	// Make sure to null-terminate it, since fileops won't behave otherwise
++	new_objects_dir[objects_dirlen] = '\0';
++
++	if ((error = repospanner_get_client(&client, repository)) != 0)
++		return error;
++
++	db = git__calloc(1, sizeof(struct repospanner_odb));
++	GITERR_CHECK_ALLOC(db);
++
++	db->client = client;
++	db->repo = repository;
++	db->fsdb = fsbackend;
++	db->objects_dir = new_objects_dir;
++	db->objects_dirlen = objects_dirlen;
++
++	db->parent.version = GIT_ODB_BACKEND_VERSION;
++	db->parent.read = &impl__read;
++	db->parent.write = &impl__write;
++	db->parent.read_header = &impl__read_header;
++	db->parent.exists = &impl__exists;
++	db->parent.free = &impl__free;
++
++	*out = (git_odb_backend *)db;
++	return 0;
++}
+diff --git a/src/refdb.c b/src/refdb.c
+index c162a153f..fc445220a 100644
+--- a/src/refdb.c
++++ b/src/refdb.c
+@@ -35,6 +35,7 @@ int git_refdb_new(git_refdb **out, git_repository *repo)
+ 
+ int git_refdb_open(git_refdb **out, git_repository *repo)
+ {
++	int error;
+ 	git_refdb *db;
+ 	git_refdb_backend *dir;
+ 
+@@ -45,10 +46,19 @@ int git_refdb_open(git_refdb **out, git_repository *repo)
+ 	if (git_refdb_new(&db, repo) < 0)
+ 		return -1;
+ 
+-	/* Add the default (filesystem) backend */
+-	if (git_refdb_backend_fs(&dir, repo) < 0) {
+-		git_refdb_free(db);
+-		return -1;
++	/* First see if we need the repoSpanner backend */
++	error = git_refdb_backend_repospanner(&dir, repo);
++	if (error != GIT_OK) {
++		if (error == GIT_ENOTFOUND) {
++			/* This repo is not repoSpanner-enabled */
++			/* Attempt the default (filesystem) backend */
++			if (git_refdb_backend_fs(&dir, repo) < 0) {
++				git_refdb_free(db);
++				return -1;
++			}
++		} else {
++			return error;
++		}
+ 	}
+ 
+ 	db->repo = repo;
+diff --git a/src/refdb_repospanner.c b/src/refdb_repospanner.c
+new file mode 100644
+index 000000000..5ab8bbcb5
+--- /dev/null
++++ b/src/refdb_repospanner.c
+@@ -0,0 +1,575 @@
++/*
++ * Copyright (C) the libgit2 contributors. All rights reserved.
++ *
++ * This file is part of libgit2, distributed under the GNU GPL v2 with
++ * a Linking Exception. For full terms see the included COPYING file.
++ */
++
++#include "common.h"
++#include "refs.h"
++#include "hash.h"
++#include "repository.h"
++#include "fileops.h"
++#include "filebuf.h"
++#include "pack.h"
++#include "reflog.h"
++#include "refdb.h"
++#include "iterator.h"
++#include "sortedcache.h"
++#include "signature.h"
++#include "repospanner.h"
++
++#include <git2/tag.h>
++#include <git2/object.h>
++#include <git2/refdb.h>
++#include <git2/branch.h>
++#include <git2/sys/refdb_backend.h>
++#include <git2/sys/refs.h>
++#include <git2/sys/reflog.h>
++
++#ifdef __GNUC__
++#  define UNUSED(x) UNUSED_ ## x __attribute__((__unused__))
++#else
++#  define UNUSED(x) UNUSED_ ## x
++#endif
++
++typedef struct refdb_rs_backend {
++	git_refdb_backend parent;
++
++	git_repository *repo;
++
++	repoSpanner_client *client;
++
++	git_sortedcache *refcache;
++} refdb_rs_backend;
++
++typedef struct refdb_rs_iter {
++	git_reference_iterator backend;
++
++	git_pool pool;
++	char *glob;
++
++	git_sortedcache *refcache;
++	size_t current_pos;
++} refdb_rs_iter;
++
++struct packref {
++	git_oid oid;
++	git_oid peel;
++	char flags;
++	char name[GIT_FLEX_ARRAY];
++};
++
++struct refretrieve {
++	git_buf buffer;
++	git_sortedcache *target;
++};
++
++static int parse_symb_ref(git_sortedcache *target, const char *name, const char *val)
++{
++	struct packref *realref;
++	struct packref *ref;
++	int error;
++
++	realref = git_sortedcache_lookup(target, val);
++	if (!realref)  // If the real ref didn't exist... Let's skip for now
++		return GIT_OK;
++
++	ref = git__calloc(1, sizeof(struct packref));
++	if (ref == NULL) {
++		giterr_set_oom();
++		return GIT_ERROR;
++	}
++
++	if (git_sortedcache_upsert((void **)&ref, target, name) < 0) {
++		giterr_set(GITERR_ODB, "Unable to insert into target refcache");
++		return GIT_ERROR;
++	}
++
++	ref->oid = realref->oid;
++
++	// TODO: Get other flags and peeled
++
++	return GIT_OK;
++}
++
++static int parse_ref(git_sortedcache *target, const char *start, const char *end)
++{
++	struct packref *ref;
++	const char *type = NULL, *name = NULL, *val = NULL;
++	const char *pos;
++
++	type = start;
++	for (pos = start; pos < end; pos++) {
++		if (*pos != '\0') {
++			continue;
++		}
++		if (name == NULL)
++			name = pos+1;
++		else {
++			val = pos+1;
++			break;
++		}
++	}
++
++	if ((type == NULL) || (name == NULL) || (val == NULL)) {
++		giterr_set(GITERR_ODB, "invalid ref parsed");
++		return GIT_ERROR;
++	}
++
++	if (!strcmp(type, "real") && !strcmp(type, "symb")) {
++		giterr_set(GITERR_ODB, "ref has invalid type '%s'", type);
++		return GIT_ERROR;
++	}
++
++	if (!strcmp(type, "symb"))
++		return parse_symb_ref(target, name, val);
++
++	if (strcmp(type, "real") && strlen(val) != 40) {
++		giterr_set(GITERR_ODB, "ref of type real has invalid val '%s'", val);
++		return GIT_ERROR;
++	}
++
++	ref = git__calloc(1, sizeof(struct packref));
++	if (ref == NULL) {
++		giterr_set_oom();
++		return GIT_ERROR;
++	}
++
++	if (git_sortedcache_upsert((void **)&ref, target, name) < 0) {
++		giterr_set(GITERR_ODB, "Unable to insert into target refcache");
++		return GIT_ERROR;
++	}
++
++	if (git_oid_fromstrn(&ref->oid, val, 40) != GIT_OK) {
++		giterr_set(GITERR_ODB, "Could not parse oid");
++		return GIT_ERROR;
++	}
++
++	// TODO: Get other flags and peeled
++
++	return GIT_OK;
++}
++
++int ref_write_parse(struct refretrieve *data, bool final)
++{
++	int error;
++	const char *possiblebreak, *newlinepoint, *bufval;
++
++	// Now, see if we got a newline (end of a ref)
++	while(true) {  // We might have gotten multiple refs, parse until we have nothing left
++		bufval = git_buf_cstr(&data->buffer);
++		newlinepoint = NULL;
++
++		for (possiblebreak = bufval; possiblebreak < bufval + git_buf_len(&data->buffer); possiblebreak++) {
++			if (*possiblebreak == '\n') {
++				newlinepoint = possiblebreak;
++				break;
++			}
++		}
++
++		if (newlinepoint == NULL) {  // No newlines received
++			if (!final)
++				return GIT_OK;  // Not yet final, we might still get more data
++			else {
++				if (git_buf_len(&data->buffer) == 0)
++					return GIT_OK;  // We exhausted the buffer, nothing to see here
++				else
++					return GIT_ERROR;  // We have a partial line without more data inbound
++			}
++		}
++
++		if ((error = parse_ref(data->target, bufval, newlinepoint)) != GIT_OK)
++			return error;
++
++		git_buf_consume(&data->buffer, newlinepoint+1);
++	}
++}
++
++size_t ref_write_callback(char *ptr, size_t UNUSED(size), size_t nmemb, void *userdata)
++{
++	struct refretrieve *data = (struct refretrieve *)userdata;
++
++	// First, just add the data we just got to the buffer
++	if(git_buf_put(&data->buffer, ptr, nmemb) != GIT_OK) {  // Sane would be to use "size", but not for curl
++		return GIT_ERROR;
++	}
++
++	if(ref_write_parse(data, false) == GIT_OK) {
++		return nmemb;
++	} else {
++		return GIT_ERROR;
++	}
++}
++
++
++static int packref_cmp(const void *a_, const void *b_)
++{
++	const struct packref *a = a_, *b = b_;
++	return strcmp(a->name, b->name);
++}
++
++
++static int _ensure_refs_loaded(refdb_rs_backend *backend)
++{
++	git_sortedcache *newcache;
++	CURL *req;
++	struct refretrieve *retriever;
++	int error = GIT_ERROR;;
++
++	if(backend->refcache != NULL)
++		return GIT_OK;
++
++	if ((error = git_sortedcache_new(
++			&newcache, offsetof(struct packref, name), NULL, NULL,
++			packref_cmp, NULL)) < 0) {
++		return error;
++	}
++
++	if ((error = repospanner_prepare_request(&req, backend->client, "simple/refs")) != GIT_OK)
++		goto fail;
++
++	retriever = git__calloc(1, sizeof(struct refretrieve));
++	if (!retriever)
++		goto fail;
++	retriever->target = newcache;
++	if ((error = git_buf_init(&retriever->buffer, 0)) != GIT_OK)
++		goto fail;
++
++	curl_easy_setopt(req, CURLOPT_WRITEFUNCTION, ref_write_callback);
++	curl_easy_setopt(req, CURLOPT_WRITEDATA, retriever);
++
++	if ((error = (repospanner_check_curl(req))) != GIT_OK)
++		goto fail;
++
++	if(ref_write_parse(retriever, true) != GIT_OK) {
++		giterr_set(GITERR_ODB, "Parsing failed");
++		goto fail;
++	}
++
++	backend->refcache = newcache;
++	return GIT_OK;
++
++fail:
++	if (req)
++		curl_free(req);
++	if (retriever)
++		git_buf_free(&retriever->buffer);
++	git_sortedcache_free(newcache);
++
++	return error ? error : GIT_ERROR;
++}
++
++static int refdb_rs__exists(
++	int *exists,
++	git_refdb_backend *_backend,
++	const char *ref_name)
++{
++	int error = GIT_OK;
++	void *entry;
++
++	refdb_rs_backend *backend = (refdb_rs_backend *)_backend;
++
++	if ((error = _ensure_refs_loaded(backend)) != GIT_OK)
++		return error;
++
++	if((error = git_sortedcache_rlock(backend->refcache)) < 0)
++		return error;
++
++	entry = git_sortedcache_lookup(backend->refcache, ref_name);
++
++	git_sortedcache_runlock(backend->refcache);
++
++	*exists = entry != NULL;
++
++	return GIT_OK;
++}
++
++static int ref_error_notfound(const char *name)
++{
++	giterr_set(GITERR_REFERENCE, "reference '%s' not found", name);
++	return GIT_ENOTFOUND;
++}
++
++static int refdb_rs__lookup(
++	git_reference **out,
++	git_refdb_backend *_backend,
++	const char *ref_name)
++{
++	struct packref *entry;
++	int error = GIT_OK;
++
++	refdb_rs_backend *backend = (refdb_rs_backend *)_backend;
++
++	if ((error = _ensure_refs_loaded(backend)) != GIT_OK)
++		return error;
++
++	if((error = git_sortedcache_rlock(backend->refcache)) < 0)
++		return error;
++
++	entry = git_sortedcache_lookup(backend->refcache, ref_name);
++	if (!entry)
++		error = ref_error_notfound(ref_name);
++	else {
++		*out = git_reference__alloc(ref_name, &entry->oid, &entry->peel);
++		if (!*out)
++			error = -1;
++	}
++
++	git_sortedcache_runlock(backend->refcache);
++
++	return error;
++}
++
++static int refdb_rs__iterator_next(
++	git_reference **out, git_reference_iterator *_iter)
++{
++	int error = GIT_ITEROVER;
++	refdb_rs_iter *iter = (refdb_rs_iter *)_iter;
++	struct packref *ref;
++
++	while(iter->current_pos < git_sortedcache_entrycount(iter->refcache)) {
++		ref = git_sortedcache_entry(iter->refcache, iter->current_pos++);
++		if (!ref)  // If we have NULL even though there should be something, the world blew up
++			break;
++
++		if (iter->glob && p_fnmatch(iter->glob, ref->name, 0) != 0)
++			continue;
++
++		*out = git_reference__alloc(ref->name, &ref->oid, &ref->peel);
++		error = (*out != NULL) ? GIT_OK : GIT_ERROR;
++		break;
++	}
++
++	return error;
++}
++
++static int refdb_rs__iterator_next_name(
++	const char **out, git_reference_iterator *_iter)
++{
++	int error = GIT_ITEROVER;
++	refdb_rs_iter *iter = (refdb_rs_iter *)_iter;
++	struct packref *ref;
++
++	while(iter->current_pos < git_sortedcache_entrycount(iter->refcache)) {
++		ref = git_sortedcache_entry(iter->refcache, iter->current_pos++);
++		if (!ref)  // If we have NULL even though there should be something, the world blew up
++			break;
++
++		if (iter->glob && p_fnmatch(iter->glob, ref->name, 0) != 0)
++			continue;
++
++		*out = ref->name;
++		error = GIT_OK;
++		break;
++	}
++
++	return error;
++}
++
++static void refdb_rs__iterator_free(git_reference_iterator *_iter)
++{
++	refdb_rs_iter *iter = (refdb_rs_iter *)_iter;
++
++	git_pool_clear(&iter->pool);
++	git_sortedcache_free(iter->refcache);
++	git__free(iter);
++}
++
++static int refdb_rs__iterator(
++	git_reference_iterator **out,
++	git_refdb_backend *_backend,
++	const char *glob)
++{
++	refdb_rs_iter *iter;
++	int error = GIT_OK;
++
++	refdb_rs_backend *backend = (refdb_rs_backend *)_backend;
++
++	if ((error = _ensure_refs_loaded(backend)) != GIT_OK)
++		return error;
++
++	iter = git__calloc(1, sizeof(refdb_rs_iter));
++	GITERR_CHECK_ALLOC(iter);
++
++	iter->current_pos = 0;
++
++	if ((error = git_sortedcache_copy(&iter->refcache, backend->refcache, 1, NULL, NULL)) < 0)
++		goto fail;
++
++	git_pool_init(&iter->pool, 1);
++	if (glob != NULL &&
++		(iter->glob = git_pool_strdup(&iter->pool, glob)) == NULL)
++		goto fail;
++
++	iter->backend.next = refdb_rs__iterator_next;
++	iter->backend.next_name = refdb_rs__iterator_next_name;
++	iter->backend.free = refdb_rs__iterator_free;
++
++	*out = (git_reference_iterator *)iter;
++
++	return GIT_OK;
++
++fail:
++	refdb_rs__iterator_free((git_reference_iterator *)iter);
++	return -1;
++}
++
++static int rs_not_implemented(const char *fname)
++{
++	giterr_set(GITERR_INVALID, "function %s not implemented for repoSpanner", fname);
++	return GIT_EINVALID;
++}
++
++static int refdb_rs__write(
++	git_refdb_backend *UNUSED(backend),
++	const git_reference *UNUSED(ref),
++	int UNUSED(force),
++	const git_signature *UNUSED(Who),
++	const char *UNUSED(message),
++	const git_oid *UNUSED(old),
++	const char *UNUSED(old_target))
++{
++	return rs_not_implemented("write");
++}
++
++static int refdb_rs__rename(
++	git_reference **UNUSED(out),
++	git_refdb_backend *UNUSED(backend),
++	const char *UNUSED(old_name),
++	const char *UNUSED(new_name),
++	int UNUSED(force),
++	const git_signature *UNUSED(who),
++	const char *UNUSED(message))
++{
++	return rs_not_implemented("rename");
++}
++
++static int refdb_rs__del(
++	git_refdb_backend *UNUSED(backend),
++	const char *UNUSED(ref_name),
++	const git_oid *UNUSED(old_id),
++	const char *UNUSED(old_target))
++{
++	return rs_not_implemented("del");
++}
++
++static int refdb_rs__compress(git_refdb_backend *UNUSED(backend))
++{
++	return GIT_OK;
++}
++
++static int refdb_reflog_rs__has_log(
++	git_refdb_backend *UNUSED(backend),
++	const char *UNUSED(refname))
++{
++	return 0;
++}
++
++static int refdb_reflog_rs__ensure_log(
++	git_refdb_backend *UNUSED(backend),
++	const char *UNUSED(refname))
++{
++	return rs_not_implemented("ensure_log");
++}
++
++static int refdb_reflog_rs__read(
++	git_reflog **UNUSED(out),
++	git_refdb_backend *UNUSED(backend),
++	const char *UNUSED(refname))
++{
++	return rs_not_implemented("reflog_read");
++}
++
++static int refdb_reflog_rs__write(
++	git_refdb_backend *UNUSED(backend),
++	git_reflog *UNUSED(reflog))
++{
++	return rs_not_implemented("reflog_write");
++}
++
++static int refdb_reflog_rs__rename(
++	git_refdb_backend *UNUSED(_backend),
++	const char *UNUSED(old_name),
++	const char *UNUSED(new_name))
++{
++	return rs_not_implemented("reflog_rename");
++}
++
++
++static int refdb_reflog_rs__delete(
++	git_refdb_backend *UNUSED(backend),
++	const char *UNUSED(refname))
++{
++	return rs_not_implemented("reflog_delete");
++}
++
++static int refdb_rs__lock(
++	void **UNUSED(payload_out),
++	git_refdb_backend *UNUSED(backend),
++	const char *UNUSED(refname))
++{
++	return rs_not_implemented("lock");
++}
++
++static int refdb_rs__unlock(
++	git_refdb_backend *UNUSED(backend),
++	void *UNUSED(payload),
++	int UNUSED(success),
++	int UNUSED(update_reflog),
++	const git_reference *UNUSED(ref),
++	const git_signature *UNUSED(sig),
++	const char *UNUSED(message))
++{
++	return rs_not_implemented("unlock");
++}
++
++static void refdb_rs__free(git_refdb_backend *_backend)
++{
++	refdb_rs_backend *backend = (refdb_rs_backend *)_backend;
++
++	assert(backend);
++
++	if (backend->refcache != NULL)
++		git_sortedcache_free(backend->refcache);
++	git__free(backend);
++}
++
++int git_refdb_backend_repospanner(
++	git_refdb_backend **backend_out,
++	git_repository *repository)
++{
++	int error = GIT_OK;
++	refdb_rs_backend *backend;
++	repoSpanner_client *client;
++
++	if ((error = repospanner_get_client(&client, repository)) != 0)
++		return error;
++
++	backend = git__calloc(1, sizeof(refdb_rs_backend));
++	GITERR_CHECK_ALLOC(backend);
++
++	backend->client = client;
++	backend->repo = repository;
++	backend->refcache = NULL;
++
++	backend->parent.exists = &refdb_rs__exists;
++	backend->parent.lookup = &refdb_rs__lookup;
++	backend->parent.iterator = &refdb_rs__iterator;
++	backend->parent.write = &refdb_rs__write;
++	backend->parent.del = &refdb_rs__del;
++	backend->parent.rename = &refdb_rs__rename;
++	backend->parent.compress = &refdb_rs__compress;
++	backend->parent.lock = &refdb_rs__lock;
++	backend->parent.unlock = &refdb_rs__unlock;
++	backend->parent.has_log = &refdb_reflog_rs__has_log;
++	backend->parent.ensure_log = &refdb_reflog_rs__ensure_log;
++	backend->parent.free = &refdb_rs__free;
++	backend->parent.reflog_read = &refdb_reflog_rs__read;
++	backend->parent.reflog_write = &refdb_reflog_rs__write;
++	backend->parent.reflog_rename = &refdb_reflog_rs__rename;
++	backend->parent.reflog_delete = &refdb_reflog_rs__delete;
++
++	*backend_out = (git_refdb_backend *)backend;
++	return GIT_OK;
++}
+diff --git a/src/repository.c b/src/repository.c
+index a2f88a283..93dd04e57 100644
+--- a/src/repository.c
++++ b/src/repository.c
+@@ -1088,7 +1088,8 @@ int git_repository_odb__weakptr(git_odb **out, git_repository *repo)
+ 		GIT_REFCOUNT_OWN(odb, repo);
+ 
+ 		if ((error = git_odb__set_caps(odb, GIT_ODB_CAP_FROM_OWNER)) < 0 ||
+-			(error = git_odb__add_default_backends(odb, odb_path.ptr, 0, 0)) < 0) {
++			(error = git_odb__add_default_backends(odb, odb_path.ptr, 0, 0)) < 0 ||
++			(error = git_odb__add_repospanner_backend(odb, odb_path.ptr, repo)) < 0) {
+ 			git_odb_free(odb);
+ 			return error;
+ 		}
+diff --git a/src/repospanner.c b/src/repospanner.c
+new file mode 100644
+index 000000000..48c1062fd
+--- /dev/null
++++ b/src/repospanner.c
+@@ -0,0 +1,241 @@
++/*
++ * Copyright (C) the libgit2 contributors. All rights reserved.
++ *
++ * This file is part of libgit2, distributed under the GNU GPL v2 with
++ * a Linking Exception. For full terms see the included COPYING file.
++ */
++
++#include "common.h"
++#include "repository.h"
++#include "fileops.h"
++#include "filebuf.h"
++#include "iterator.h"
++#include "sortedcache.h"
++#include "signature.h"
++#include "repospanner.h"
++
++#include <git2/version.h>
++#include <git2/tag.h>
++#include <git2/sys/refdb_backend.h>
++#include <git2/sys/refs.h>
++#include <git2/sys/reflog.h>
++
++#ifndef GIT_CURL
++# error "GIT_CURL required for repoSpanner support"
++#endif
++
++#ifdef __GNUC__
++#  define UNUSED(x) UNUSED_ ## x __attribute__((__unused__))
++#else
++#  define UNUSED(x) UNUSED_ ## x
++#endif
++
++
++typedef struct repoSpanner_client {
++	CURL *basehandle;
++	// TODO: At some point move the Share object globally so cross-repo can also
++	// use the same TLS cache?
++	// Will need to see about whether sharing depends on the client cert used.
++	CURLSH *share;
++
++	git_buf baseurl;
++
++	const char gitdir[GIT_FLEX_ARRAY];
++} repoSpanner_client;
++
++git_sortedcache *global_clients;
++
++static int client_cmp(const void *a_, const void *b_)
++{
++	const struct repoSpanner_client *a = a_, *b = b_;
++	return strcmp(a->gitdir, b->gitdir);
++}
++
++int repospanner_global_init()
++{
++	return git_sortedcache_new(
++		&global_clients, offsetof(struct repoSpanner_client, gitdir),
++		NULL, NULL, client_cmp, NULL
++	);
++}
++
++/* Returns GIT_ENOTFOUND if not repospanner repo, GIT_OK if so */
++int repo_check_repospanner(git_repository *repo)
++{
++	int enabled, error;
++
++	if (repo->_config == NULL)
++		return GIT_ENOTFOUND;  // This only happens with partial inits, like test suite
++
++	error = git_config_get_bool(&enabled, repo->_config, "repospanner.enabled");
++	if (error != GIT_OK) {
++		if (error == GIT_ENOTFOUND) {
++			giterr_clear();
++		}
++		return error;
++	}
++
++	if (!enabled)
++		return GIT_ENOTFOUND;
++
++	return GIT_OK;
++}
++
++GIT_INLINE(int) repospanner_user_agent(git_buf *buf)
++{
++	return git_buf_printf(buf, "git/2.0 (libgit2 %s) repospanner/1", LIBGIT2_VERSION);
++}
++
++int repospanner_get_client(repoSpanner_client **out, git_repository *repo)
++{
++	git_buf baseurlbuf = GIT_BUF_INIT;
++	git_buf bufval = GIT_BUF_INIT;
++	int error = GIT_ERROR;
++	repoSpanner_client *client;
++
++	if((error = repo_check_repospanner(repo)) != GIT_OK)
++		return error;
++
++	if (git_sortedcache_wlock(global_clients) != GIT_OK)
++		return GIT_ERROR;
++
++	client = git_sortedcache_lookup(global_clients, repo->gitdir);
++	if (client) {
++		*out = client;
++		git_sortedcache_wunlock(global_clients);
++		return GIT_OK;
++	}
++
++	if ((error = git_sortedcache_upsert((void**)&client, global_clients, repo->gitdir)) != GIT_OK)
++		goto fail;
++
++	client->basehandle = curl_easy_init();
++	if (!client->basehandle)
++		goto fail;
++
++	client->share = curl_share_init();
++	if (!client->share)
++		goto fail;
++
++	// Debugging
++	if (getenv("REPOSPANNER_CURL_DEBUG"))
++		curl_easy_setopt(client->basehandle, CURLOPT_VERBOSE, 1L);
++
++	curl_easy_setopt(client->basehandle, CURLOPT_FAILONERROR, 1L);
++	curl_easy_setopt(client->basehandle, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
++	curl_easy_setopt(client->basehandle, CURLOPT_FOLLOWLOCATION, 0L);
++	curl_easy_setopt(client->basehandle, CURLOPT_SHARE, client->share);
++	// These should be default, but still going to set it explicitly
++	curl_easy_setopt(client->basehandle, CURLOPT_USE_SSL, CURLUSESSL_ALL);
++	curl_easy_setopt(client->basehandle, CURLOPT_SSL_VERIFYHOST, 2L);
++	curl_easy_setopt(client->basehandle, CURLOPT_SSL_VERIFYPEER, 1L);
++
++	curl_share_setopt(client->share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS |
++													  CURL_LOCK_DATA_SSL_SESSION |
++													  CURL_LOCK_DATA_CONNECT);
++
++	if ((error = repospanner_user_agent(&bufval)) != GIT_OK)
++		goto fail;
++	curl_easy_setopt(client->basehandle, CURLOPT_USERAGENT, git_buf_cstr(&bufval));
++	git_buf_clear(&bufval);
++
++	client->baseurl = baseurlbuf;
++	if ((error = git_config_get_string_buf(&client->baseurl, repo->_config, "repospanner.url")) != GIT_OK) {
++		if (error == GIT_ENOTFOUND) {
++			giterr_set(GITERR_ODB, "Required config option url missing");
++			error = GIT_ERROR;
++		}
++		goto fail;
++	}
++
++	if ((error = git_config_get_string_buf(&bufval, repo->_config, "repospanner.cert")) != GIT_OK) {
++		if (error == GIT_ENOTFOUND) {
++			giterr_set(GITERR_ODB, "Required config option cert missing");
++			error = GIT_ERROR;
++		}
++		goto fail;
++	}
++	curl_easy_setopt(client->basehandle, CURLOPT_SSLCERT, git_buf_cstr(&bufval));
++	git_buf_clear(&bufval);
++
++	if ((error = git_config_get_string_buf(&bufval, repo->_config, "repospanner.key")) != GIT_OK) {
++		if (error == GIT_ENOTFOUND) {
++			giterr_set(GITERR_ODB, "Required config option key missing");
++			error = GIT_ERROR;
++		}
++		goto fail;
++	}
++	curl_easy_setopt(client->basehandle, CURLOPT_SSLKEY, git_buf_cstr(&bufval));
++	git_buf_clear(&bufval);
++
++	if ((error = git_config_get_string_buf(&bufval, repo->_config, "repospanner.cacert")) != GIT_OK) {
++		if (error == GIT_ENOTFOUND) {
++			giterr_set(GITERR_ODB, "Required config option cacert missing");
++			error = GIT_ERROR;
++		}
++		goto fail;
++	}
++	curl_easy_setopt(client->basehandle, CURLOPT_CAINFO, git_buf_cstr(&bufval));
++	git_buf_clear(&bufval);
++
++	// Data normalizaton
++	if (git_buf_cstr(&client->baseurl)[git_buf_len(&client->baseurl)] == '/')
++		git_buf_shorten(&client->baseurl, 1);
++
++
++	git_sortedcache_wunlock(global_clients);
++
++	*out = client;
++	return GIT_OK;
++
++fail:
++	git_sortedcache_wunlock(global_clients);
++
++	git_buf_free(&client->baseurl);
++	git_buf_free(&bufval);
++	git__free(client);
++	return error;
++}
++
++int repospanner_prepare_request(CURL **out, repoSpanner_client *client, const char *path)
++{
++	int error;
++	CURL *newreq;
++	git_buf pathbuf = GIT_BUF_INIT;
++
++	if ((error = git_buf_joinpath(&pathbuf, git_buf_cstr(&client->baseurl), path)) != GIT_OK)
++		return error;
++
++	newreq = curl_easy_duphandle(client->basehandle);
++	if(newreq == NULL)
++		return GIT_ERROR;
++	if (curl_easy_setopt(newreq, CURLOPT_URL, git_buf_cstr(&pathbuf)))
++		return GIT_ERROR;
++	git_buf_free(&pathbuf);
++
++	*out = newreq;
++	return GIT_OK;
++}
++
++int repospanner_check_curl(CURL *req)
++{
++	int error;
++	long response_code;
++
++	error = curl_easy_perform(req);
++
++	if (error == CURLE_OK)
++		return GIT_OK;
++
++	if (error == CURLE_HTTP_RETURNED_ERROR) {
++		// Check for 404
++		curl_easy_getinfo(req, CURLINFO_RESPONSE_CODE, &response_code);
++		giterr_set(GITERR_NET, "Error received from repoSpanner: %ld", response_code);
++		if (response_code == 404)
++			return GIT_ENOTFOUND;
++	} else {
++		giterr_set(GITERR_ODB, "Error performing curl request: (%d): %s", error, curl_easy_strerror(error));
++	}
++
++	return GIT_ERROR;
++}
+diff --git a/src/repospanner.h b/src/repospanner.h
+new file mode 100644
+index 000000000..f4db5465c
+--- /dev/null
++++ b/src/repospanner.h
+@@ -0,0 +1,21 @@
++/*
++ * Copyright (C) the libgit2 contributors. All rights reserved.
++ *
++ * This file is part of libgit2, distributed under the GNU GPL v2 with
++ * a Linking Exception. For full terms see the included COPYING file.
++ */
++#ifndef INCLUDE_repospanner_h__
++#define INCLUDE_repospanner_h__
++
++#include "common.h"
++
++#include <curl/curl.h>
++
++typedef struct repoSpanner_client repoSpanner_client;
++
++extern int repospanner_global_init(void);
++extern int repospanner_get_client(repoSpanner_client **out, git_repository *repo);
++extern int repospanner_prepare_request(CURL **out, repoSpanner_client *client, const char *path);
++extern int repospanner_check_curl(CURL *req);
++
++#endif
+-- 
+2.17.1
+
+
+From 9ccc29a7f0eb629e74ec91a8ac8bc5d48ff7efd6 Mon Sep 17 00:00:00 2001
+From: Patrick Uiterwijk <patrick@puiterwijk.org>
+Date: Fri, 21 Sep 2018 12:28:28 +0200
+Subject: [PATCH 2/4] Handle symbolic refs correctly
+
+Signed-off-by: Patrick Uiterwijk <patrick@puiterwijk.org>
+---
+ src/refdb_repospanner.c | 21 ++++++++++++++++-----
+ 1 file changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/src/refdb_repospanner.c b/src/refdb_repospanner.c
+index 5ab8bbcb5..6c81b751c 100644
+--- a/src/refdb_repospanner.c
++++ b/src/refdb_repospanner.c
+@@ -53,9 +53,14 @@ typedef struct refdb_rs_iter {
+ 	size_t current_pos;
+ } refdb_rs_iter;
+ 
++enum {
++	PACKREF_IS_SYMBOLIC = 1,
++};
++
+ struct packref {
+ 	git_oid oid;
+ 	git_oid peel;
++	const char *targetref;
+ 	char flags;
+ 	char name[GIT_FLEX_ARRAY];
+ };
+@@ -69,7 +74,6 @@ static int parse_symb_ref(git_sortedcache *target, const char *name, const char
+ {
+ 	struct packref *realref;
+ 	struct packref *ref;
+-	int error;
+ 
+ 	realref = git_sortedcache_lookup(target, val);
+ 	if (!realref)  // If the real ref didn't exist... Let's skip for now
+@@ -86,7 +90,9 @@ static int parse_symb_ref(git_sortedcache *target, const char *name, const char
+ 		return GIT_ERROR;
+ 	}
+ 
+-	ref->oid = realref->oid;
++	// ref->oid = realref->oid;
++	ref->targetref = realref->name;
++	ref->flags = PACKREF_IS_SYMBOLIC;
+ 
+ 	// TODO: Get other flags and peeled
+ 
+@@ -146,8 +152,6 @@ static int parse_ref(git_sortedcache *target, const char *start, const char *end
+ 		return GIT_ERROR;
+ 	}
+ 
+-	// TODO: Get other flags and peeled
+-
+ 	return GIT_OK;
+ }
+ 
+@@ -311,7 +315,14 @@ static int refdb_rs__lookup(
+ 	if (!entry)
+ 		error = ref_error_notfound(ref_name);
+ 	else {
+-		*out = git_reference__alloc(ref_name, &entry->oid, &entry->peel);
++		if (entry->flags & PACKREF_IS_SYMBOLIC) {
++			// Symbolic reference
++			*out = git_reference__alloc_symbolic(ref_name, entry->targetref);
++		} else {
++			// Real reference
++			*out = git_reference__alloc(ref_name, &entry->oid, &entry->peel);
++		}
++
+ 		if (!*out)
+ 			error = -1;
+ 	}
+-- 
+2.17.1
+
+
+From 4e83a2bb011d107235bd41c7509f8afee769b105 Mon Sep 17 00:00:00 2001
+From: Patrick Uiterwijk <patrick@puiterwijk.org>
+Date: Mon, 1 Oct 2018 15:15:29 +0200
+Subject: [PATCH 3/4] Remove a free too much
+
+Signed-off-by: Patrick Uiterwijk <patrick@puiterwijk.org>
+---
+ src/repospanner.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/src/repospanner.c b/src/repospanner.c
+index 48c1062fd..8efb78c91 100644
+--- a/src/repospanner.c
++++ b/src/repospanner.c
+@@ -193,7 +193,6 @@ fail:
+ 
+ 	git_buf_free(&client->baseurl);
+ 	git_buf_free(&bufval);
+-	git__free(client);
+ 	return error;
+ }
+ 
+-- 
+2.17.1
+
+
+From 69f6003026a1c28a3f1e7ccf8f16cfd68a2e4f79 Mon Sep 17 00:00:00 2001
+From: Patrick Uiterwijk <patrick@puiterwijk.org>
+Date: Mon, 1 Oct 2018 15:15:50 +0200
+Subject: [PATCH 4/4] Create fake HEAD if nothing existed
+
+Signed-off-by: Patrick Uiterwijk <patrick@puiterwijk.org>
+---
+ src/refdb_repospanner.c | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/src/refdb_repospanner.c b/src/refdb_repospanner.c
+index 6c81b751c..47ae8dbfe 100644
+--- a/src/refdb_repospanner.c
++++ b/src/refdb_repospanner.c
+@@ -312,9 +312,13 @@ static int refdb_rs__lookup(
+ 		return error;
+ 
+ 	entry = git_sortedcache_lookup(backend->refcache, ref_name);
+-	if (!entry)
+-		error = ref_error_notfound(ref_name);
+-	else {
++	if (!entry) {
++		if (strcmp(ref_name, GIT_HEAD_FILE) == 0)
++			// If we didn't have a HEAD ref, say it's on master
++			*out = git_reference__alloc_symbolic(GIT_HEAD_FILE, "refs/heads/master");
++		else
++			error = ref_error_notfound(ref_name);
++	} else {
+ 		if (entry->flags & PACKREF_IS_SYMBOLIC) {
+ 			// Symbolic reference
+ 			*out = git_reference__alloc_symbolic(ref_name, entry->targetref);
+-- 
+2.17.1
+
