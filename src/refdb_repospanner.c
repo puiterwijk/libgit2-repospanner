@@ -53,9 +53,14 @@ typedef struct refdb_rs_iter {
 	size_t current_pos;
 } refdb_rs_iter;
 
+enum {
+	PACKREF_IS_SYMBOLIC = 1,
+};
+
 struct packref {
 	git_oid oid;
 	git_oid peel;
+	const char *targetref;
 	char flags;
 	char name[GIT_FLEX_ARRAY];
 };
@@ -69,7 +74,6 @@ static int parse_symb_ref(git_sortedcache *target, const char *name, const char 
 {
 	struct packref *realref;
 	struct packref *ref;
-	int error;
 
 	realref = git_sortedcache_lookup(target, val);
 	if (!realref)  // If the real ref didn't exist... Let's skip for now
@@ -86,7 +90,9 @@ static int parse_symb_ref(git_sortedcache *target, const char *name, const char 
 		return GIT_ERROR;
 	}
 
-	ref->oid = realref->oid;
+	// ref->oid = realref->oid;
+	ref->targetref = realref->name;
+	ref->flags = PACKREF_IS_SYMBOLIC;
 
 	// TODO: Get other flags and peeled
 
@@ -145,8 +151,6 @@ static int parse_ref(git_sortedcache *target, const char *start, const char *end
 		giterr_set(GITERR_ODB, "Could not parse oid");
 		return GIT_ERROR;
 	}
-
-	// TODO: Get other flags and peeled
 
 	return GIT_OK;
 }
@@ -311,7 +315,14 @@ static int refdb_rs__lookup(
 	if (!entry)
 		error = ref_error_notfound(ref_name);
 	else {
-		*out = git_reference__alloc(ref_name, &entry->oid, &entry->peel);
+		if (entry->flags & PACKREF_IS_SYMBOLIC) {
+			// Symbolic reference
+			*out = git_reference__alloc_symbolic(ref_name, entry->targetref);
+		} else {
+			// Real reference
+			*out = git_reference__alloc(ref_name, &entry->oid, &entry->peel);
+		}
+
 		if (!*out)
 			error = -1;
 	}
