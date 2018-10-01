@@ -193,7 +193,6 @@ fail:
 
 	git_buf_free(&client->baseurl);
 	git_buf_free(&bufval);
-	git__free(client);
 	return error;
 }
 
