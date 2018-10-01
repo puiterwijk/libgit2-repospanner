@@ -312,9 +312,13 @@ static int refdb_rs__lookup(
 		return error;
 
 	entry = git_sortedcache_lookup(backend->refcache, ref_name);
-	if (!entry)
-		error = ref_error_notfound(ref_name);
-	else {
+	if (!entry) {
+		if (strcmp(ref_name, GIT_HEAD_FILE) == 0)
+			// If we didn't have a HEAD ref, say it's on master
+			*out = git_reference__alloc_symbolic(GIT_HEAD_FILE, "refs/heads/master");
+		else
+			error = ref_error_notfound(ref_name);
+	} else {
 		if (entry->flags & PACKREF_IS_SYMBOLIC) {
 			// Symbolic reference
 			*out = git_reference__alloc_symbolic(ref_name, entry->targetref);
