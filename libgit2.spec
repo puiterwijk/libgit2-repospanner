@@ -5,6 +5,8 @@ Summary:        C implementation of the Git core methods as a library with a sol
 License:        GPLv2 with exceptions
 URL:            http://libgit2.github.com/
 Source0:        https://github.com/libgit2/libgit2/archive/v%{version}/%{name}-%{version}.tar.gz
+# https://github.com/libgit2/libgit2/commit/415a8ae9c9b6ac18f0524b6af8e58408b426457d
+Patch0001:      0001-tests-don-t-run-buf-oom-on-32-bit-systems.patch
 
 BuildRequires:  gcc
 BuildRequires:  cmake
@@ -37,11 +39,8 @@ developing applications that use %{name}.
 # Remove VCS files from examples
 find examples -name ".gitignore" -delete -print
 
-# Fix pkgconfig generation
-sed -i 's|@CMAKE_INSTALL_PREFIX@/||' libgit2.pc.in
-
-# Don't test network
-sed -i 's/ionline/xonline/' CMakeLists.txt
+# Don't run "online" tests
+sed -i '/ADD_TEST(online/s/^/#/' CMakeLists.txt
 
 # Remove bundled libraries
 rm -frv deps
