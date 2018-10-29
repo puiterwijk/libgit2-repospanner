@@ -3,7 +3,7 @@ Version:        0.26.8
 Release:        1%{?dist}
 Summary:        C implementation of the Git core methods as a library with a solid API
 License:        GPLv2 with exceptions
-URL:            http://libgit2.github.com/
+URL:            https://libgit2.org
 Source0:        https://github.com/libgit2/libgit2/archive/v%{version}/%{name}-%{version}.tar.gz
 # https://github.com/libgit2/libgit2/commit/415a8ae9c9b6ac18f0524b6af8e58408b426457d
 Patch0001:      0001-tests-don-t-run-buf-oom-on-32-bit-systems.patch
@@ -80,6 +80,7 @@ popd
 %changelog
 * Fri Oct 26 2018 Pete Walter <pwalter@fedoraproject.org> - 0.26.8-1
 - Update to 0.26.8
+- Update upstream URL
 
 * Mon Oct 08 2018 Pete Walter <pwalter@fedoraproject.org> - 0.26.7-1
 - Update to 0.26.7 (CVE-2018-17456)
